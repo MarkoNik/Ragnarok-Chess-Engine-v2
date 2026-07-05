@@ -7,6 +7,7 @@ import engine.search.Evaluator;
 import engine.search.Minimax;
 import engine.search.MoveGenerator;
 import engine.search.MoveOrderer;
+import engine.search.TimeManager;
 import engine.util.PerftDriver;
 import engine.util.bits.FenParser;
 import uci.command.GoCommandWrapper;
@@ -25,6 +26,7 @@ public class EngineState {
     private final MoveGenerator moveGenerator;
     private final Minimax minimax;
     private final TranspositionTable transpositionTable;
+    private final TimeManager timeManager = new TimeManager();
 
     public EngineState() {
         BitboardHelper bitboardHelper = new BitboardHelper();
@@ -52,16 +54,10 @@ public class EngineState {
             depth = INF;
         }
 
-        // interrupt search in 3 seconds
-        new Thread(() -> {
-            try {
-                Thread.sleep(3000);
-                minimax.interruptSearch();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        }).start();
+        int budgetMs = TimeManager.computeBudgetMs(goCommandWrapper, gameState.isWhiteTurn());
+        timeManager.schedule(budgetMs, minimax::interruptSearch);
         var searchStats = minimax.initiateSearch(depth, gameState.isWhiteTurn());
+        timeManager.cancel();
         searchStats.logSearchStats();
 
         int eval = minimax.getBestEval();
