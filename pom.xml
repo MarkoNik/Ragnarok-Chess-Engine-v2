@@ -10,6 +10,8 @@
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
+        <!-- Slow/exhaustive tests (deep perft) are opt-in: -Dgroups=slow -DexcludedGroups= -->
+        <excludedGroups>slow</excludedGroups>
     </properties>
 
     <build>
@@ -28,8 +30,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
-                    <!-- Slow/exhaustive tests (deep perft) are opt-in via -Dgroups=slow -->
-                    <excludedGroups>slow</excludedGroups>
+                    <excludedGroups>${excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>
