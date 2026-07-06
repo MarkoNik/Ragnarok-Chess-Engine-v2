@@ -20,8 +20,8 @@ Example - vs. a calibrated Stockfish:
 """
 import argparse
 import datetime
+import json
 import logging
-import math
 import pathlib
 import shlex
 import sys
@@ -29,6 +29,8 @@ import sys
 import chess
 import chess.engine
 import chess.pgn
+
+from elo import elo_diff_with_error
 
 # python-chess logs every raw engine I/O line (and warns on any line it
 # doesn't recognize, e.g. if an engine ever logs to stdout) at a level that's
@@ -69,29 +71,6 @@ def parse_options(spec):
                 pass
         options[key] = value
     return options
-
-
-def elo_diff_with_error(wins, draws, losses):
-    """Standard score->Elo conversion with a 95% CI from the sample variance
-    of individual game outcomes (1/0.5/0), not a naive binomial approximation.
-    Returns (elo, elo_lo, elo_hi), any of which may be None if undefined
-    (all-wins or all-losses put the point estimate at +/-infinity)."""
-    n = wins + draws + losses
-    if n == 0:
-        return None, None, None
-
-    p = (wins + 0.5 * draws) / n
-    variance = (wins * (1 - p) ** 2 + draws * (0.5 - p) ** 2 + losses * (0 - p) ** 2) / n
-    stderr = math.sqrt(variance / n) if n > 0 else 0.0
-
-    def to_elo(score):
-        score = min(max(score, 1e-6), 1 - 1e-6)
-        return -400 * math.log10(1 / score - 1)
-
-    elo = to_elo(p)
-    elo_lo = to_elo(p - 1.95996 * stderr)
-    elo_hi = to_elo(p + 1.95996 * stderr)
-    return elo, elo_lo, elo_hi
 
 
 def play_game(engine_white, engine_black, book_line, movetime_ms, max_plies):
@@ -135,10 +114,15 @@ def main():
     parser.add_argument("--engine-a-options", default="", help="comma-separated K=V UCI options for engine A")
     parser.add_argument("--engine-b-options", default="", help="comma-separated K=V UCI options for engine B")
     parser.add_argument("--games", type=int, default=10, help="total games to play (split as evenly as possible between colors)")
+    parser.add_argument("--game-offset", type=int, default=0,
+                         help="starting game index, for sharding a larger run across parallel invocations "
+                              "so each shard plays a disjoint set of book lines/colors instead of repeating "
+                              "the same games (e.g. shard k of N with --games G: --game-offset k*G)")
     parser.add_argument("--movetime", type=int, default=200, help="ms per move for both engines")
     parser.add_argument("--book", default=str(DEFAULT_BOOK), help="path to opening book (one UCI move sequence per line)")
     parser.add_argument("--max-plies", type=int, default=300, help="safety cap; games still going at this ply count are aborted as a result of neither side")
     parser.add_argument("--pgn-out", default=None, help="path to write all games as PGN (default: bench/results/<timestamp>.pgn)")
+    parser.add_argument("--summary-out", default=None, help="optional path to write a JSON result summary, for aggregating sharded runs")
     args = parser.parse_args()
 
     book = load_book(args.book)
@@ -162,7 +146,8 @@ def main():
         aborted = 0
 
         with open(pgn_out, "w") as pgn_file:
-            for i in range(args.games):
+            for game_num in range(args.games):
+                i = args.game_offset + game_num
                 book_line = book[i % len(book)]
                 a_is_white = (i % 2 == 0)
                 white, black = (engine_a, engine_b) if a_is_white else (engine_b, engine_a)
@@ -191,11 +176,19 @@ def main():
                     outcome = "draw"
                     a_draws += 1
 
-                print(f"game {i + 1:>4}/{args.games}  {white_name:>12} vs {black_name:<12}  "
-                      f"result={result:<5} {outcome}" + (f"  ({aborted_reason})" if aborted_reason else ""))
+                print(f"game {game_num + 1:>4}/{args.games} (index {i})  {white_name:>12} vs {black_name:<12}  "
+                      f"result={result:<5} {outcome}" + (f"  ({aborted_reason})" if aborted_reason else ""),
+                      flush=True)
     finally:
-        engine_a.quit()
-        engine_b.quit()
+        # A game that ends because an engine died leaves that engine's
+        # SimpleEngine wrapper already terminated; quit() on it would raise
+        # and skip the summary below entirely (as well as skipping quit() on
+        # the other engine). One misbehaving game shouldn't cost us the report.
+        for engine in (engine_a, engine_b):
+            try:
+                engine.quit()
+            except chess.engine.EngineError:
+                pass
 
     played = a_wins + a_draws + a_losses
     print()
@@ -203,12 +196,30 @@ def main():
     print(f"{args.engine_a_name}: {a_wins}W {a_draws}D {a_losses}L  "
           f"score={a_wins + 0.5 * a_draws:.1f}/{played} ({(a_wins + 0.5 * a_draws) / played * 100:.1f}%)" if played else "no completed games")
 
+    elo = elo_lo = elo_hi = None
     if played:
         elo, elo_lo, elo_hi = elo_diff_with_error(a_wins, a_draws, a_losses)
         print(f"Elo diff ({args.engine_a_name} - {args.engine_b_name}): {elo:+.0f} "
               f"[95% CI {elo_lo:+.0f}, {elo_hi:+.0f}]")
 
     print(f"PGN written to {pgn_out}")
+
+    if args.summary_out:
+        summary = {
+            "engine_a_name": args.engine_a_name,
+            "engine_b_name": args.engine_b_name,
+            "a_wins": a_wins,
+            "a_draws": a_draws,
+            "a_losses": a_losses,
+            "aborted": aborted,
+            "elo_diff": elo,
+            "elo_diff_lo": elo_lo,
+            "elo_diff_hi": elo_hi,
+        }
+        summary_path = pathlib.Path(args.summary_out)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps(summary, indent=2))
+        print(f"Summary written to {summary_path}")
 
 
 if __name__ == "__main__":
