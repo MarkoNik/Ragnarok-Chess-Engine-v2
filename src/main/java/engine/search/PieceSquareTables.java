@@ -88,20 +88,24 @@ public class PieceSquareTables {
             -50, -30, -30, -30, -30, -30, -30, -50
     };
 
-    public static int evaluatePiece(int piece, int square, boolean isEndgame, boolean isWhiteTurn) {
-        if (!isWhiteTurn) {
+    public static int evaluatePiece(int piece, int square, boolean isEndgame, boolean isWhitePiece) {
+        if (!isWhitePiece) {
             // Flip the board for black pieces
             square = 63 - square;
         }
 
-        boolean isWhitePiece = piece < Piece.WHITE_PIECE_TYPES;
-        int result = switch (piece) {
-            case Piece.PAWN -> PAWN_TABLE[square];
-            case Piece.KNIGHT -> KNIGHT_TABLE[square];
-            case Piece.BISHOP -> BISHOP_TABLE[square];
-            case Piece.ROOK -> ROOK_TABLE[square];
-            case Piece.QUEEN -> QUEEN_TABLE[square];
-            case Piece.KING -> isEndgame ? KING_EG_TABLE[square] : KING_MG_TABLE[square];
+        // piece is a color+type index (WHITE_PAWN=0 .. BLACK_KING=11); reduce to a
+        // color-agnostic type in [0,5] matching WHITE_PAWN..WHITE_KING's own values,
+        // so the switch below doesn't need the separate PAWN..KING (1-6) constants
+        // that caused every case here to be off by one relative to what's passed in.
+        int pieceType = piece % Piece.WHITE_PIECE_TYPES;
+        int result = switch (pieceType) {
+            case Piece.WHITE_PAWN -> PAWN_TABLE[square];
+            case Piece.WHITE_KNIGHT -> KNIGHT_TABLE[square];
+            case Piece.WHITE_BISHOP -> BISHOP_TABLE[square];
+            case Piece.WHITE_ROOK -> ROOK_TABLE[square];
+            case Piece.WHITE_QUEEN -> QUEEN_TABLE[square];
+            case Piece.WHITE_KING -> isEndgame ? KING_EG_TABLE[square] : KING_MG_TABLE[square];
             default -> 0;
         };
         // invert the result for black pieces

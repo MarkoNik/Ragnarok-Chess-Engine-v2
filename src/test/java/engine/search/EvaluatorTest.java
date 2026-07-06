@@ -3,7 +3,6 @@ package engine.search;
 import app.Constants;
 import engine.core.state.GameState;
 import engine.util.bits.FenParser;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -103,12 +102,6 @@ class EvaluatorTest {
         assertEquals(eval, -mirroredEval, "material-only eval should negate exactly under mirroring: " + fen);
     }
 
-    @Disabled("Known bug: PieceSquareTables.evaluatePiece switches on the wrong piece-index space "
-            + "(Piece.PAWN..KING [1-6, color-agnostic] instead of the WHITE_PAWN..BLACK_KING [0-11] "
-            + "index it's actually called with), so PST lookups are shifted/wrong for White and mostly "
-            + "zero for Black. Confirmed via this test (8/8 mirrored cases failed) plus a hand-traced "
-            + "arithmetic check. Fix deferred until end-to-end strength testing infra is in place so the "
-            + "improvement can be measured. Re-enable once PieceSquareTables is fixed.")
     @ParameterizedTest
     @ValueSource(strings = {
             Constants.INITIAL_FEN,
