@@ -1,0 +1,62 @@
+# Opening book for match_runner.py: one line per opening, moves in UCI
+# (long algebraic) notation separated by spaces. Lines starting with '#'
+# and blank lines are ignored. These are short, well-known main lines
+# chosen to diversify pawn structure across games; games are not meant
+# to be "book-fair", just varied.
+
+# Italian Game
+e2e4 e7e5 g1f3 b8c6 f1c4 f8c5
+# Ruy Lopez
+e2e4 e7e5 g1f3 b8c6 f1b5 a7a6
+# Scotch Game
+e2e4 e7e5 g1f3 b8c6 d2d4 e5d4
+# Petrov's Defense
+e2e4 e7e5 g1f3 g8f6
+# Sicilian Najdorf
+e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6
+# Sicilian Dragon
+e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 g7g6
+# French Defense
+e2e4 e7e6 d2d4 d7d5
+# Caro-Kann Defense
+e2e4 c7c6 d2d4 d7d5
+# Scandinavian Defense
+e2e4 d7d5 e4d5 d8d5
+# Pirc Defense
+e2e4 d7d6 d2d4 g8f6 b1c3 g7g6
+# Queen's Gambit Declined
+d2d4 d7d5 c2c4 e7e6
+# Queen's Gambit Accepted
+d2d4 d7d5 c2c4 d5c4
+# Slav Defense
+d2d4 d7d5 c2c4 c7c6
+# Nimzo-Indian Defense
+d2d4 g8f6 c2c4 e7e6 b1c3 f8b4
+# King's Indian Defense
+d2d4 g8f6 c2c4 g7g6 b1c3 f8g7
+# Grunfeld Defense
+d2d4 g8f6 c2c4 g7g6 b1c3 d7d5
+# Dutch Defense
+d2d4 f7f5
+# English Opening
+c2c4 e7e5
+# Reti Opening
+g1f3 d7d5 c2c4
+# London System
+d2d4 d7d5 c1f4
+# Vienna Game
+e2e4 e7e5 b1c3
+# Four Knights Game
+e2e4 e7e5 g1f3 b8c6 b1c3 g8f6
+# King's Gambit
+e2e4 e7e5 f2f4
+# Bishop's Opening
+e2e4 e7e5 f1c4
+# Alekhine's Defense
+e2e4 g8f6
+# Modern Defense
+e2e4 g7g6
+# Benoni Defense
+d2d4 g8f6 c2c4 c7c5
+# Catalan Opening
+d2d4 g8f6 c2c4 e7e6 g2g3

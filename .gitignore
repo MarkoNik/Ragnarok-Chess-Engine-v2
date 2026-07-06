@@ -5,3 +5,9 @@ out/
 
 target/
 log/
+
+### Bench / match runner ###
+bench/.venv/
+bench/__pycache__/
+bench/results/**
+!bench/results/.gitkeep
