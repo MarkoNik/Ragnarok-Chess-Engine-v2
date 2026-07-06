@@ -80,10 +80,14 @@ jobs:
 
   build-new:
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref_new || github.sha }}
+      - id: resolve
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -193,12 +197,14 @@ jobs:
           path: shard-results/
 
   aggregate:
-    needs: play
+    needs: [build-new, play]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
+        # No ref override: checks out the branch that dispatched this workflow,
+        # so the "record checkpoint" step below can push back to it.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -210,14 +216,14 @@ jobs:
       - name: Aggregate each comparison
         run: |
           {
-            echo "## new (${{ inputs.ref_new || github.sha }}) vs prev (${{ inputs.ref_prev }})"
-            python bench/aggregate_results.py "all-results/prev-*.json"
+            echo "## new (${{ needs.build-new.outputs.sha }}) vs prev (${{ inputs.ref_prev }})"
+            python bench/aggregate_results.py "all-results/prev-*.json" --json-out vs-prev.json
             echo
             echo "## new vs Stockfish ${{ inputs.stockfish_elo_a }}"
-            python bench/aggregate_results.py "all-results/sfA-*.json"
+            python bench/aggregate_results.py "all-results/sfA-*.json" --json-out vs-sfA.json
             echo
             echo "## new vs Stockfish ${{ inputs.stockfish_elo_b }}"
-            python bench/aggregate_results.py "all-results/sfB-*.json"
+            python bench/aggregate_results.py "all-results/sfB-*.json" --json-out vs-sfB.json
           } | tee "$GITHUB_STEP_SUMMARY"
           cat all-results/*.pgn > combined.pgn
       - uses: actions/upload-artifact@v4
@@ -225,3 +231,27 @@ jobs:
           name: combined-pgn
           path: combined.pgn
           retention-days: 30
+      - name: Record checkpoint to bench/history.jsonl
+        run: |
+          # Re-sync to the branch tip right before appending+pushing, to keep
+          # the race window (another push landing mid-run) as small as
+          # possible. This is a personal-scale repo; a hard reset here is
+          # safe since we're about to add one line, not build on local state.
+          git fetch origin ${{ github.ref_name }}
+          git reset --hard origin/${{ github.ref_name }}
+
+          python bench/record_checkpoint.py \
+            --ref-new "${{ inputs.ref_new || github.sha }}" \
+            --ref-new-sha "${{ needs.build-new.outputs.sha }}" \
+            --ref-prev "${{ inputs.ref_prev }}" \
+            --stockfish-elo-a "${{ inputs.stockfish_elo_a }}" \
+            --stockfish-elo-b "${{ inputs.stockfish_elo_b }}" \
+            --vs-prev-json vs-prev.json \
+            --vs-sfa-json vs-sfA.json \
+            --vs-sfb-json vs-sfB.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bench/history.jsonl
+          git commit -m "Record checkpoint: new ${{ needs.build-new.outputs.sha }} vs prev ${{ inputs.ref_prev }}"
+          git push origin HEAD:${{ github.ref_name }}
