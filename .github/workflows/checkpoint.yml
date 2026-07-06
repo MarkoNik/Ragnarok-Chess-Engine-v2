@@ -6,12 +6,12 @@ name: Version checkpoint (vs previous + vs 2 Stockfish levels)
 #
 # Sharded so all three comparisons run as one wave of concurrent jobs. GitHub
 # Actions caps an account at 20 concurrent jobs (free plan, applies even to
-# public repos with otherwise-unlimited minutes) - the default of 6 shards
-# per comparison (18 play jobs total) stays under that with a bit of
-# headroom. Games-per-shard, not total games, is what determines wall time:
-# doubling games_per_comparison roughly doubles run time, since shard count
-# is fixed. To go faster for a fixed game count, raise shards_per_comparison
-# (up to ~6, so 3*shards_per_comparison stays comfortably under 20).
+# public repos with otherwise-unlimited minutes) - total_play_jobs defaults
+# to that exact ceiling. The 3 comparisons don't split evenly into 20, so
+# setup distributes shards (and each shard's own game count) as evenly as
+# possible per comparison (7/7/6) rather than requiring a multiple of 3.
+# Games-per-shard, not total games, is what determines wall time: doubling
+# games_per_comparison roughly doubles run time, since job count is capped.
 on:
   workflow_dispatch:
     inputs:
@@ -35,10 +35,10 @@ on:
         description: "games to play for EACH of the 3 comparisons"
         type: number
         default: 100
-      shards_per_comparison:
-        description: "parallel jobs per comparison (total concurrent play jobs = 3x this)"
+      total_play_jobs:
+        description: "total concurrent play jobs across all 3 comparisons (GitHub's account-wide cap is 20)"
         type: number
-        default: 6
+        default: 20
       movetime:
         description: "ms per move"
         type: number
@@ -53,20 +53,30 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.gen.outputs.matrix }}
-      games_per_shard: ${{ steps.gen.outputs.games_per_shard }}
     steps:
       - id: gen
         run: |
           python3 -c "
           import json
-          shards = ${{ inputs.shards_per_comparison }}
-          matrix = [{'comparison': c, 'shard': s}
-                    for c in ['prev', 'sfA', 'sfB']
-                    for s in range(shards)]
+
+          def split_evenly(total, parts):
+              # e.g. split_evenly(20, 3) -> [7, 7, 6]; split_evenly(100, 7) -> 7 values summing to 100
+              base, rem = divmod(total, parts)
+              return [base + 1 if i < rem else base for i in range(parts)]
+
+          comparisons = ['prev', 'sfA', 'sfB']
+          shard_counts = split_evenly(${{ inputs.total_play_jobs }}, len(comparisons))
+
+          matrix = []
+          for comparison, shard_count in zip(comparisons, shard_counts):
+              games_per_shard = split_evenly(${{ inputs.games_per_comparison }}, shard_count)
+              offset = 0
+              for shard, games in enumerate(games_per_shard):
+                  matrix.append({'comparison': comparison, 'shard': shard, 'games': games, 'offset': offset})
+                  offset += games
           print(json.dumps(matrix))
           " > /tmp/matrix.json
           echo "matrix=$(cat /tmp/matrix.json)" >> "$GITHUB_OUTPUT"
-          echo "games_per_shard=$(( ${{ inputs.games_per_comparison }} / ${{ inputs.shards_per_comparison }} ))" >> "$GITHUB_OUTPUT"
 
   build-new:
     runs-on: ubuntu-latest
@@ -170,8 +180,8 @@ jobs:
             --engine-a "$ENGINE_NEW" --engine-a-name new \
             --engine-b "$ENGINE_B" --engine-b-name "$NAME_B" \
             --engine-b-options "$OPTS_B" \
-            --games ${{ needs.setup.outputs.games_per_shard }} \
-            --game-offset $(( ${{ matrix.shard }} * ${{ needs.setup.outputs.games_per_shard }} )) \
+            --games ${{ matrix.games }} \
+            --game-offset ${{ matrix.offset }} \
             --movetime ${{ inputs.movetime }} \
             --max-plies ${{ inputs.max_plies }} \
             --pgn-out "shard-results/${{ matrix.comparison }}-${{ matrix.shard }}.pgn" \
