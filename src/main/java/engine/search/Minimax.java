@@ -10,6 +10,7 @@ import java.util.List;
 import static app.Constants.INF;
 import static engine.core.entity.Piece.CHECKMATE_VALUE;
 import static java.lang.Math.max;
+import static java.lang.Math.min;
 
 public class Minimax {
     private Bitboard bitboard;
@@ -241,7 +242,7 @@ public class Minimax {
     public List<Integer> getPrincipalVariation(int depth, boolean isWhiteTurn) {
         List<Integer> pv = new ArrayList<>();
         // limit the max depth to 10 to avoid infinite recursion in case of key collisions
-        int maxDepth = max(depth, 10);
+        int maxDepth = min(depth, 10);
         while (maxDepth-- > 0) {
             TranspositionTable.TTEntry entry = transpositionTable.get(bitboard.getHash());
             if (entry == null || entry.bestMove() == -1) {

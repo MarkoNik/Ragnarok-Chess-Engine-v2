@@ -295,6 +295,11 @@ public class Bitboard {
     }
 
     public void backupState() {
+        if (backupStackPointer >= BACKUP_STACK_SIZE) {
+            throw new IllegalStateException("Bitboard backup stack overflow: backupState() was called "
+                    + BACKUP_STACK_SIZE + " times without a matching restoreState(). This means some "
+                    + "caller is backing up state without restoring it, e.g. an unbounded loop.");
+        }
         piecesBackup[backupStackPointer] = pieces.clone();
         occupanciesBackup[backupStackPointer] = occupancies.clone();
         castlesFlagsBackup[backupStackPointer] = castlesFlags;
@@ -304,6 +309,10 @@ public class Bitboard {
     }
 
     public void restoreState() {
+        if (backupStackPointer <= 0) {
+            throw new IllegalStateException("Bitboard backup stack underflow: restoreState() was called "
+                    + "without a matching prior backupState().");
+        }
         backupStackPointer--;
         pieces = piecesBackup[backupStackPointer];
         occupancies = occupanciesBackup[backupStackPointer];
