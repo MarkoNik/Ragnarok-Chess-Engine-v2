@@ -1,7 +1,10 @@
 <configuration>
 
-    <!-- Console appender for stderr -->
+    <!-- Console appender for stderr. Must stay on stderr, not the default stdout:
+         stdout is the UCI protocol channel and must contain nothing else, or
+         GUIs/automation tools trying to parse it get confused. -->
     <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss} %level %logger{36} - %msg%n</pattern>
         </encoder>
