@@ -1,0 +1,200 @@
+name: Engine strength benchmark
+
+# Manual only - this plays real games and can take a while, so it shouldn't
+# run on every push. GitHub Actions is free and unlimited (standard runners,
+# 6h per job cap) for public repos, so this is a zero-cost way to parallelize
+# a match across many runners instead of running it serially on one machine.
+on:
+  workflow_dispatch:
+    inputs:
+      opponent:
+        description: "self (engine vs itself, ref_a vs ref_b) or stockfish (engine vs a calibrated Stockfish)"
+        type: choice
+        options: [self, stockfish]
+        default: self
+      ref_a:
+        description: "git ref to build as engine A (default: the ref that triggered this run)"
+        type: string
+        default: ""
+      ref_b:
+        description: "git ref to build as engine B, only used when opponent=self (default: same as ref_a)"
+        type: string
+        default: ""
+      stockfish_elo:
+        description: "UCI_Elo for Stockfish, only used when opponent=stockfish (1320-3190)"
+        type: string
+        default: "1500"
+      total_games:
+        description: "total games across all shards"
+        type: number
+        default: 200
+      shards:
+        description: "number of parallel jobs to split the games across"
+        type: number
+        default: 5
+      movetime:
+        description: "ms per move"
+        type: number
+        default: 150
+      max_plies:
+        description: "safety cap; games still going at this ply count are aborted"
+        type: number
+        default: 200
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      shard_list: ${{ steps.shards.outputs.list }}
+      games_per_shard: ${{ steps.shards.outputs.games_per_shard }}
+    steps:
+      - id: shards
+        run: |
+          python3 -c "
+          import json
+          shards = ${{ inputs.shards }}
+          print(json.dumps(list(range(shards))))
+          " > /tmp/shard_list.json
+          echo "list=$(cat /tmp/shard_list.json)" >> "$GITHUB_OUTPUT"
+          echo "games_per_shard=$(( ${{ inputs.total_games }} / ${{ inputs.shards }} ))" >> "$GITHUB_OUTPUT"
+
+  build-a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref_a || github.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: mvn -q -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-a-jar
+          # Exact filename, not a glob: the shade plugin also leaves behind
+          # original-my-project-*.jar (the pre-shade thin jar) in target/,
+          # and a glob here would upload/select both, breaking `java -jar`.
+          path: target/my-project-1.0-SNAPSHOT.jar
+          retention-days: 7
+
+  build-b:
+    if: ${{ inputs.opponent == 'self' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref_b || inputs.ref_a || github.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: mvn -q -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-b-jar
+          # Exact filename, not a glob: the shade plugin also leaves behind
+          # original-my-project-*.jar (the pre-shade thin jar) in target/,
+          # and a glob here would upload/select both, breaking `java -jar`.
+          path: target/my-project-1.0-SNAPSHOT.jar
+          retention-days: 7
+
+  play:
+    needs: [setup, build-a, build-b]
+    if: always() && needs.build-a.result == 'success' && (needs.build-b.result == 'success' || needs.build-b.result == 'skipped')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(needs.setup.outputs.shard_list) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }} # bench/ tooling always comes from the ref that triggered this run
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r bench/requirements.txt
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-a-jar
+          path: engine-a
+
+      - name: Download engine B jar
+        if: ${{ inputs.opponent == 'self' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-b-jar
+          path: engine-b
+
+      - name: Install Stockfish
+        if: ${{ inputs.opponent == 'stockfish' }}
+        run: sudo apt-get update && sudo apt-get install -y stockfish
+
+      - name: Play this shard's games
+        run: |
+          mkdir -p shard-results
+          ENGINE_A="java -jar engine-a/my-project-1.0-SNAPSHOT.jar"
+
+          if [ "${{ inputs.opponent }}" = "self" ]; then
+            ENGINE_B="java -jar engine-b/my-project-1.0-SNAPSHOT.jar"
+            NAME_A="ref_a"
+            NAME_B="ref_b"
+            OPTS_B=""
+          else
+            ENGINE_B="stockfish"
+            NAME_A="ragnarok"
+            NAME_B="stockfish-${{ inputs.stockfish_elo }}"
+            OPTS_B="UCI_LimitStrength=true,UCI_Elo=${{ inputs.stockfish_elo }}"
+          fi
+
+          python bench/run_match.py \
+            --engine-a "$ENGINE_A" --engine-a-name "$NAME_A" \
+            --engine-b "$ENGINE_B" --engine-b-name "$NAME_B" \
+            --engine-b-options "$OPTS_B" \
+            --games ${{ needs.setup.outputs.games_per_shard }} \
+            --game-offset $(( ${{ matrix.shard }} * ${{ needs.setup.outputs.games_per_shard }} )) \
+            --movetime ${{ inputs.movetime }} \
+            --max-plies ${{ inputs.max_plies }} \
+            --pgn-out shard-results/shard-${{ matrix.shard }}.pgn \
+            --summary-out shard-results/shard-${{ matrix.shard }}.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}-results
+          path: shard-results/
+
+  aggregate:
+    needs: play
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*-results
+          path: all-results
+          merge-multiple: true
+      - name: Aggregate results
+        run: |
+          python bench/aggregate_results.py "all-results/*.json" | tee "$GITHUB_STEP_SUMMARY"
+          cat all-results/*.pgn > combined.pgn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: combined-pgn
+          path: combined.pgn
+          retention-days: 30
