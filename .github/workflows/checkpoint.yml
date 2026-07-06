@@ -1,0 +1,217 @@
+name: Version checkpoint (vs previous + vs 2 Stockfish levels)
+
+# The standard "how much did we improve, and what's our absolute strength"
+# check: run a new version against the previous checkpoint AND against two
+# Stockfish levels bracketing its expected rating, all in one dispatch.
+#
+# Sharded so all three comparisons run as one wave of concurrent jobs. GitHub
+# Actions caps an account at 20 concurrent jobs (free plan, applies even to
+# public repos with otherwise-unlimited minutes) - the default of 6 shards
+# per comparison (18 play jobs total) stays under that with a bit of
+# headroom. Games-per-shard, not total games, is what determines wall time:
+# doubling games_per_comparison roughly doubles run time, since shard count
+# is fixed. To go faster for a fixed game count, raise shards_per_comparison
+# (up to ~6, so 3*shards_per_comparison stays comfortably under 20).
+on:
+  workflow_dispatch:
+    inputs:
+      ref_new:
+        description: "git ref of the new version being evaluated"
+        type: string
+        default: ""
+      ref_prev:
+        description: "git ref of the previous checkpoint to compare against"
+        type: string
+        required: true
+      stockfish_elo_a:
+        description: "first Stockfish UCI_Elo to compare against (1320-3190)"
+        type: string
+        default: "1600"
+      stockfish_elo_b:
+        description: "second Stockfish UCI_Elo to compare against (1320-3190)"
+        type: string
+        default: "1800"
+      games_per_comparison:
+        description: "games to play for EACH of the 3 comparisons"
+        type: number
+        default: 100
+      shards_per_comparison:
+        description: "parallel jobs per comparison (total concurrent play jobs = 3x this)"
+        type: number
+        default: 6
+      movetime:
+        description: "ms per move"
+        type: number
+        default: 150
+      max_plies:
+        description: "safety cap; games still going at this ply count are aborted"
+        type: number
+        default: 200
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      games_per_shard: ${{ steps.gen.outputs.games_per_shard }}
+    steps:
+      - id: gen
+        run: |
+          python3 -c "
+          import json
+          shards = ${{ inputs.shards_per_comparison }}
+          matrix = [{'comparison': c, 'shard': s}
+                    for c in ['prev', 'sfA', 'sfB']
+                    for s in range(shards)]
+          print(json.dumps(matrix))
+          " > /tmp/matrix.json
+          echo "matrix=$(cat /tmp/matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "games_per_shard=$(( ${{ inputs.games_per_comparison }} / ${{ inputs.shards_per_comparison }} ))" >> "$GITHUB_OUTPUT"
+
+  build-new:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref_new || github.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: mvn -q -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-new-jar
+          path: target/my-project-1.0-SNAPSHOT.jar
+          retention-days: 7
+
+  build-prev:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref_prev }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: mvn -q -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-prev-jar
+          path: target/my-project-1.0-SNAPSHOT.jar
+          retention-days: 7
+
+  play:
+    needs: [setup, build-new, build-prev]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }} # bench/ tooling always comes from the ref that triggered this run
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r bench/requirements.txt
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-new-jar
+          path: engine-new
+
+      - name: Download previous-version jar
+        if: matrix.comparison == 'prev'
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-prev-jar
+          path: engine-prev
+
+      - name: Install Stockfish
+        if: matrix.comparison != 'prev'
+        run: sudo apt-get update && sudo apt-get install -y stockfish
+
+      - name: Play this shard's games
+        run: |
+          mkdir -p shard-results
+          ENGINE_NEW="java -jar engine-new/my-project-1.0-SNAPSHOT.jar"
+
+          case "${{ matrix.comparison }}" in
+            prev)
+              ENGINE_B="java -jar engine-prev/my-project-1.0-SNAPSHOT.jar"
+              NAME_B="prev"
+              OPTS_B=""
+              ;;
+            sfA)
+              ENGINE_B="stockfish"
+              NAME_B="stockfish-${{ inputs.stockfish_elo_a }}"
+              OPTS_B="UCI_LimitStrength=true,UCI_Elo=${{ inputs.stockfish_elo_a }}"
+              ;;
+            sfB)
+              ENGINE_B="stockfish"
+              NAME_B="stockfish-${{ inputs.stockfish_elo_b }}"
+              OPTS_B="UCI_LimitStrength=true,UCI_Elo=${{ inputs.stockfish_elo_b }}"
+              ;;
+          esac
+
+          python bench/run_match.py \
+            --engine-a "$ENGINE_NEW" --engine-a-name new \
+            --engine-b "$ENGINE_B" --engine-b-name "$NAME_B" \
+            --engine-b-options "$OPTS_B" \
+            --games ${{ needs.setup.outputs.games_per_shard }} \
+            --game-offset $(( ${{ matrix.shard }} * ${{ needs.setup.outputs.games_per_shard }} )) \
+            --movetime ${{ inputs.movetime }} \
+            --max-plies ${{ inputs.max_plies }} \
+            --pgn-out "shard-results/${{ matrix.comparison }}-${{ matrix.shard }}.pgn" \
+            --summary-out "shard-results/${{ matrix.comparison }}-${{ matrix.shard }}.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.comparison }}-${{ matrix.shard }}-results
+          path: shard-results/
+
+  aggregate:
+    needs: play
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*-results
+          path: all-results
+          merge-multiple: true
+      - name: Aggregate each comparison
+        run: |
+          {
+            echo "## new (${{ inputs.ref_new || github.sha }}) vs prev (${{ inputs.ref_prev }})"
+            python bench/aggregate_results.py "all-results/prev-*.json"
+            echo
+            echo "## new vs Stockfish ${{ inputs.stockfish_elo_a }}"
+            python bench/aggregate_results.py "all-results/sfA-*.json"
+            echo
+            echo "## new vs Stockfish ${{ inputs.stockfish_elo_b }}"
+            python bench/aggregate_results.py "all-results/sfB-*.json"
+          } | tee "$GITHUB_STEP_SUMMARY"
+          cat all-results/*.pgn > combined.pgn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: combined-pgn
+          path: combined.pgn
+          retention-days: 30
