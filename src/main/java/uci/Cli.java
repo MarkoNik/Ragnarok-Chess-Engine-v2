@@ -35,48 +35,58 @@ public class Cli implements Runnable {
     }
 
     private int handleCommand(String line) {
-        Command command = new NullCommand();
+        return resolveCommand(line).execute(engineState);
+    }
 
-        if (line.startsWith("uci")) {
-            command = new UciCommand();
+    /**
+     * Routing is by prefix match, so ordering matters whenever one command's
+     * name is itself a prefix of another's (e.g. "uci" is a prefix of
+     * "ucinewgame"). "uci" is matched by exact equality specifically to avoid
+     * swallowing "ucinewgame" - that collision used to make "ucinewgame"
+     * silently re-trigger the full "uci" identification handshake
+     * (id name/id author/uciok) instead of resetting game state.
+     */
+    static Command resolveCommand(String line) {
+        if (line.equals("uci")) {
+            return new UciCommand();
         }
         else if (line.startsWith("debug")) {
-            command = new DebugCommand(line);
+            return new DebugCommand(line);
         }
         else if (line.startsWith("isready")) {
-            command = new IsReadyCommand();
+            return new IsReadyCommand();
         }
         else if (line.startsWith("setoption")) {
-            command = new SetOptionCommand(line);
+            return new SetOptionCommand(line);
         }
         else if (line.startsWith("register")) {
-            command = new RegisterCommand();
+            return new RegisterCommand();
         }
         else if (line.startsWith("ucinewgame")) {
-            command = new UciNewGameCommand();
+            return new UciNewGameCommand();
         }
         else if (line.startsWith("position")) {
-            command = new PositionCommand(line);
+            return new PositionCommand(line);
         }
         else if (line.startsWith("go")) {
-            command = new GoCommand(line);
+            return new GoCommand(line);
         }
         else if (line.startsWith("stop")) {
-            command = new StopCommand();
+            return new StopCommand();
         }
         else if (line.startsWith("ponderhit")) {
-            command = new PonderHitCommand();
+            return new PonderHitCommand();
         }
         else if (line.startsWith("quit")) {
-            command = new QuitCommand();
+            return new QuitCommand();
         }
         else if (line.startsWith("make")) {
-            command = new MakeMoveCommand(line);
+            return new MakeMoveCommand(line);
         }
         else if (line.startsWith("unmake")) {
-            command = new UnmakeMoveCommand();
+            return new UnmakeMoveCommand();
         }
-        return command.execute(engineState);
+        return new NullCommand();
     }
 
     public static void sendCommand(String command) {
