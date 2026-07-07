@@ -12,6 +12,7 @@ public class SearchStats {
     private int lowerBounds = 0;
     private int upperBounds = 0;
     private int ttCutoffs = 0;
+    private int nullMoveCutoffs = 0;
     private int depth = 0;
 
     public void recordNodeSearched() {
@@ -50,6 +51,10 @@ public class SearchStats {
         ttCutoffs++;
     }
 
+    public void recordNullMoveCutoff() {
+        nullMoveCutoffs++;
+    }
+
     public void recordDepthIncreased() {
         depth++;
     }
@@ -67,6 +72,7 @@ public class SearchStats {
         sb.append("Lower Bounds    : ").append(lowerBounds).append("\n");
         sb.append("Upper Bounds    : ").append(upperBounds).append("\n");
         sb.append("TT Cutoffs      : ").append(ttCutoffs).append("\n");
+        sb.append("Null Move Cuts  : ").append(nullMoveCutoffs).append("\n");
         sb.append("Search Depth    : ").append(depth).append("\n\n");
         EngineLogger.debug(sb.toString());
     }

@@ -1,5 +1,6 @@
 package engine.search;
 
+import engine.core.entity.Piece;
 import engine.core.state.Bitboard;
 import engine.core.state.TranspositionTable;
 import engine.util.bits.MoveEncoder;
@@ -13,6 +14,9 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 
 public class Minimax {
+    private static final int NULL_MOVE_MIN_DEPTH = 3;
+    private static final int NULL_MOVE_REDUCTION = 2;
+
     private Bitboard bitboard;
     private final MoveGenerator moveGenerator;
     private final Evaluator evaluator;
@@ -120,6 +124,34 @@ public class Minimax {
             }
         }
 
+        // null move pruning: if we can skip a move entirely ("pass") and still fail high,
+        // the position is so good a real move will too, so cut off without searching it.
+        // Excluded at the root (ply 0 always needs a real bestMove), while in check (passing
+        // while in check isn't legal, so the resulting search would be unsound), near mate
+        // scores (a null-move-derived mate distance isn't trustworthy), and when the side to
+        // move has no non-pawn material (king+pawn endgames are exactly where "zugzwang" - a
+        // position where passing would in fact be an improvement - is common, which null move
+        // pruning assumes never happens).
+        if (ply > 0 && depth >= NULL_MOVE_MIN_DEPTH && !check
+                && beta < CHECKMATE_VALUE - 1000 && hasNonPawnMaterial(isWhiteTurn)) {
+            bitboard.backupState();
+            bitboard.makeNullMove();
+            ply++;
+
+            int nullMoveScore = -search(depth - 1 - NULL_MOVE_REDUCTION, -beta, -beta + 1, !isWhiteTurn);
+
+            ply--;
+            bitboard.restoreState();
+
+            if (interrupted) {
+                return 0;
+            }
+            if (nullMoveScore >= beta) {
+                searchStats.recordNullMoveCutoff();
+                return beta;
+            }
+        }
+
         int bestMoveThisPosition = moves[0];
         // search best move from previous iteration first
         if (transpositionTable.get(bitboard.getHash()) != null) {
@@ -170,6 +202,17 @@ public class Minimax {
 
         transpositionTable.put(bitboard.getHash(), bestMoveThisPosition, alpha, depth, ttFlag);
         return alpha;
+    }
+
+    private boolean hasNonPawnMaterial(boolean isWhiteTurn) {
+        long[] pieces = bitboard.getPieces();
+        if (isWhiteTurn) {
+            return pieces[Piece.WHITE_KNIGHT] != 0 || pieces[Piece.WHITE_BISHOP] != 0
+                    || pieces[Piece.WHITE_ROOK] != 0 || pieces[Piece.WHITE_QUEEN] != 0;
+        } else {
+            return pieces[Piece.BLACK_KNIGHT] != 0 || pieces[Piece.BLACK_BISHOP] != 0
+                    || pieces[Piece.BLACK_ROOK] != 0 || pieces[Piece.BLACK_QUEEN] != 0;
+        }
     }
 
     private int quiescenceSearch(int alpha, int beta, boolean isWhiteTurn, int depth) {

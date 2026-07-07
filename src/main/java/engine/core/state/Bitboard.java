@@ -294,6 +294,20 @@ public class Bitboard {
         makeMove(move, isWhiteTurn, false);
     }
 
+    /**
+     * Passes the turn without making a real move (used for null-move pruning).
+     * Only touches what actually changes when a side "passes": en passant
+     * rights lapse the same as after any real move, and the side-to-move hash
+     * term flips. Pair with backupState()/restoreState() same as makeMove().
+     */
+    public void makeNullMove() {
+        if (enPassantSquare != -1) {
+            hash ^= Zobrist.enPassantKeys[enPassantSquare];
+            enPassantSquare = -1;
+        }
+        hash ^= Zobrist.sidesKey;
+    }
+
     public void backupState() {
         if (backupStackPointer >= BACKUP_STACK_SIZE) {
             throw new IllegalStateException("Bitboard backup stack overflow: backupState() was called "
