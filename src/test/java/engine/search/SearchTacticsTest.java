@@ -1,5 +1,6 @@
 package engine.search;
 
+import engine.config.EngineConfig;
 import engine.core.bitboard.BitboardHelper;
 import engine.core.state.Bitboard;
 import engine.core.state.TranspositionTable;
@@ -26,7 +27,7 @@ class SearchTacticsTest {
     private static Minimax newMinimax(Bitboard bitboard) {
         MoveGenerator moveGenerator = new MoveGenerator(new BitboardHelper());
         moveGenerator.setBitboard(bitboard);
-        Minimax minimax = new Minimax(moveGenerator, new Evaluator(), new TranspositionTable(), new MoveOrderer());
+        Minimax minimax = new Minimax(moveGenerator, new Evaluator(), new TranspositionTable(), new MoveOrderer(), new EngineConfig());
         minimax.setBitboard(bitboard);
         return minimax;
     }

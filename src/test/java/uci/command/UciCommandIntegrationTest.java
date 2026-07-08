@@ -79,6 +79,25 @@ class UciCommandIntegrationTest {
         assertEquals(0, new IsReadyCommand().execute(new EngineState()));
     }
 
+    @Test
+    void setOptionCommand_togglesEngineConfigFlag() {
+        EngineState engineState = new EngineState();
+        assertTrue(engineState.getConfig().isEnabled("NullMovePruning"));
+
+        new SetOptionCommand("setoption name NullMovePruning value false").execute(engineState);
+
+        assertFalse(engineState.getConfig().isEnabled("NullMovePruning"));
+    }
+
+    @Test
+    void setOptionCommand_unknownOption_doesNotThrow() {
+        EngineState engineState = new EngineState();
+        // Real GUIs send options this engine doesn't support (e.g. "Hash", "Ponder");
+        // that must be a no-op, not a crash that kills the whole UCI session.
+        assertDoesNotThrow(() ->
+                new SetOptionCommand("setoption name Hash value 128").execute(engineState));
+    }
+
     private static Set<String> legalMovesAlgebraic(Bitboard bitboard, boolean isWhiteTurn) {
         MoveGenerator moveGenerator = new MoveGenerator(new BitboardHelper());
         moveGenerator.setBitboard(bitboard);

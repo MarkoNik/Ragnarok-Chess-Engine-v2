@@ -17,6 +17,17 @@ Example - vs. a calibrated Stockfish:
         --engine-b stockfish --engine-b-name "stockfish-1400" \\
         --engine-b-options "UCI_LimitStrength=true,UCI_Elo=1400" \\
         --games 200 --movetime 200
+
+Example - ablation test (does null-move pruning actually help?), using the
+named profiles in bench/configs/ as reusable startup defaults:
+    .venv/bin/python run_match.py \\
+        --engine-a "java -Dengine.config=bench/configs/baseline.properties -jar target/my-project-1.0-SNAPSHOT.jar" --engine-a-name with-null-move \\
+        --engine-b "java -Dengine.config=bench/configs/no-null-move-pruning.properties -jar target/my-project-1.0-SNAPSHOT.jar" --engine-b-name without-null-move \\
+        --games 200 --movetime 200
+
+The same flags can also be set directly with --engine-a-options/--engine-b-options
+(e.g. "NullMovePruning=false"), which sends a UCI "setoption" instead of loading
+a config file - useful for a one-off toggle without writing a profile file.
 """
 import argparse
 import datetime

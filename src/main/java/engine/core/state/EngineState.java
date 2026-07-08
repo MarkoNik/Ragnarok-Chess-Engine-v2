@@ -2,6 +2,7 @@ package engine.core.state;
 
 import app.Constants;
 import app.UciLogger;
+import engine.config.EngineConfig;
 import engine.core.bitboard.BitboardHelper;
 import engine.search.Evaluator;
 import engine.search.Minimax;
@@ -12,16 +13,16 @@ import engine.util.PerftDriver;
 import engine.util.bits.FenParser;
 import uci.command.GoCommandWrapper;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 
 import static app.Constants.INF;
 
 public class EngineState {
     private GameState gameState;
 
-    // TODO make a set of available configuration parameters and their values
-    private Map<String, String> configMap;
+    private final EngineConfig config;
     private int bestMove;
     private final MoveGenerator moveGenerator;
     private final Minimax minimax;
@@ -29,13 +30,30 @@ public class EngineState {
     private final TimeManager timeManager = new TimeManager();
 
     public EngineState() {
+        config = loadConfig();
         BitboardHelper bitboardHelper = new BitboardHelper();
         moveGenerator = new MoveGenerator(bitboardHelper);
         Evaluator evaluator = new Evaluator();
         transpositionTable = new TranspositionTable();
         MoveOrderer moveOrderer = new MoveOrderer();
-        minimax = new Minimax(moveGenerator, evaluator, transpositionTable, moveOrderer);
+        minimax = new Minimax(moveGenerator, evaluator, transpositionTable, moveOrderer, config);
         gameState = FenParser.parseFEN(Constants.INITIAL_FEN);
+    }
+
+    /** Startup defaults come from -Dengine.config=&lt;path&gt; (a java.util.Properties
+     *  file), falling back to all features enabled if unset. UCI "setoption" can
+     *  still override individual flags afterwards - see setConfigOption(). */
+    private static EngineConfig loadConfig() {
+        String configPath = System.getProperty("engine.config");
+        if (configPath == null) {
+            return new EngineConfig();
+        }
+        try {
+            return EngineConfig.loadFromFile(Path.of(configPath));
+        } catch (IOException e) {
+            UciLogger.error("Failed to load engine.config from " + configPath + ": " + e.getMessage());
+            return new EngineConfig();
+        }
     }
 
     public void search(GoCommandWrapper goCommandWrapper) {
@@ -89,14 +107,16 @@ public class EngineState {
         moveGenerator.clearMoves();
     }
 
-    public String getConfigOption(String name) {
-        if (!configMap.containsKey(name)) {
-            UciLogger.warn("Option with the name: " + name + " is requested but has not been set.");
-        }
-        return configMap.get(name);
+    public EngineConfig getConfig() {
+        return config;
     }
+
     public void setConfigOption(String name, String value) {
-        configMap.put(name, value);
+        try {
+            config.set(name, value);
+        } catch (IllegalArgumentException e) {
+            UciLogger.warn("Unknown engine option: " + name);
+        }
     }
 
     public int getBestMove() {

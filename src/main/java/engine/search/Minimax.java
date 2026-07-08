@@ -1,5 +1,6 @@
 package engine.search;
 
+import engine.config.EngineConfig;
 import engine.core.entity.Piece;
 import engine.core.state.Bitboard;
 import engine.core.state.TranspositionTable;
@@ -22,6 +23,7 @@ public class Minimax {
     private final Evaluator evaluator;
     private final TranspositionTable transpositionTable;
     private final MoveOrderer moveOrderer;
+    private final EngineConfig config;
     private int ply;
     private boolean interrupted = false;
     private SearchStats searchStats;
@@ -30,11 +32,12 @@ public class Minimax {
     private int bestMove;
     private int bestEval;
 
-    public Minimax(MoveGenerator moveGenerator, Evaluator evaluator, TranspositionTable transpositionTable, MoveOrderer moveOrderer) {
+    public Minimax(MoveGenerator moveGenerator, Evaluator evaluator, TranspositionTable transpositionTable, MoveOrderer moveOrderer, EngineConfig config) {
         this.moveGenerator = moveGenerator;
         this.evaluator = evaluator;
         this.transpositionTable = transpositionTable;
         this.moveOrderer = moveOrderer;
+        this.config = config;
     }
 
     /**
@@ -72,31 +75,33 @@ public class Minimax {
         }
 
         // dp style lookup
-        TranspositionTable.TTEntry entry = transpositionTable.get(bitboard.getHash());
-        if (entry != null && entry.key() == bitboard.getHash() && entry.depth() >= depth) {
-            if (entry.flag() == transpositionTable.EXACT) {
-                searchStats.recordExact();
-                if (ply == 0) {
-                    bestMoveThisIteration = entry.bestMove();
-                    bestScoreThisIteration = entry.score();
+        if (config.isEnabled("TranspositionTable")) {
+            TranspositionTable.TTEntry entry = transpositionTable.get(bitboard.getHash());
+            if (entry != null && entry.key() == bitboard.getHash() && entry.depth() >= depth) {
+                if (entry.flag() == transpositionTable.EXACT) {
+                    searchStats.recordExact();
+                    if (ply == 0) {
+                        bestMoveThisIteration = entry.bestMove();
+                        bestScoreThisIteration = entry.score();
+                    }
+                    return entry.score();
                 }
-                return entry.score();
-            }
-            else if (entry.flag() == transpositionTable.LOWER_BOUND) {
-                searchStats.recordLowerBound();
-                alpha = max(alpha, entry.score());
-            }
-            else if (entry.flag() == transpositionTable.UPPER_BOUND) {
-                searchStats.recordUpperBound();
-                beta = Math.min(beta, entry.score());
-            }
-            if (alpha >= beta && ply > 0) {
-                searchStats.recordTTCutoff();
-                if (ply == 0) {
-                    bestMoveThisIteration = entry.bestMove();
-                    bestScoreThisIteration = entry.score();
+                else if (entry.flag() == transpositionTable.LOWER_BOUND) {
+                    searchStats.recordLowerBound();
+                    alpha = max(alpha, entry.score());
                 }
-                return entry.score();
+                else if (entry.flag() == transpositionTable.UPPER_BOUND) {
+                    searchStats.recordUpperBound();
+                    beta = Math.min(beta, entry.score());
+                }
+                if (alpha >= beta && ply > 0) {
+                    searchStats.recordTTCutoff();
+                    if (ply == 0) {
+                        bestMoveThisIteration = entry.bestMove();
+                        bestScoreThisIteration = entry.score();
+                    }
+                    return entry.score();
+                }
             }
         }
 
@@ -104,7 +109,10 @@ public class Minimax {
 
         // recursion base case
         if (depth == 0) {
-            return quiescenceSearch(alpha, beta, isWhiteTurn, 4);
+            if (config.isEnabled("QuiescenceSearch")) {
+                return quiescenceSearch(alpha, beta, isWhiteTurn, 4);
+            }
+            return (isWhiteTurn ? 1 : -1) * evaluate(bitboard);
         }
 
         // generate move list
@@ -132,7 +140,7 @@ public class Minimax {
         // move has no non-pawn material (king+pawn endgames are exactly where "zugzwang" - a
         // position where passing would in fact be an improvement - is common, which null move
         // pruning assumes never happens).
-        if (ply > 0 && depth >= NULL_MOVE_MIN_DEPTH && !check
+        if (config.isEnabled("NullMovePruning") && ply > 0 && depth >= NULL_MOVE_MIN_DEPTH && !check
                 && beta < CHECKMATE_VALUE - 1000 && hasNonPawnMaterial(isWhiteTurn)) {
             bitboard.backupState();
             bitboard.makeNullMove();
@@ -154,7 +162,7 @@ public class Minimax {
 
         int bestMoveThisPosition = moves[0];
         // search best move from previous iteration first
-        if (transpositionTable.get(bitboard.getHash()) != null) {
+        if (config.isEnabled("TranspositionTable") && transpositionTable.get(bitboard.getHash()) != null) {
             bestMoveThisPosition = transpositionTable.get(bitboard.getHash()).bestMove();
             moveOrderer.sortPVFirst(moves, moveCounter, bestMoveThisPosition);
             bestMoveThisPosition = moves[0];
@@ -182,7 +190,9 @@ public class Minimax {
             // beta cutoff
             if (score >= beta) {
                 searchStats.recordBetaCutoff();
-                transpositionTable.put(bitboard.getHash(), moves[i], beta, depth, transpositionTable.LOWER_BOUND);
+                if (config.isEnabled("TranspositionTable")) {
+                    transpositionTable.put(bitboard.getHash(), moves[i], beta, depth, transpositionTable.LOWER_BOUND);
+                }
                 return beta;
             }
 
@@ -200,8 +210,16 @@ public class Minimax {
             }
         }
 
-        transpositionTable.put(bitboard.getHash(), bestMoveThisPosition, alpha, depth, ttFlag);
+        if (config.isEnabled("TranspositionTable")) {
+            transpositionTable.put(bitboard.getHash(), bestMoveThisPosition, alpha, depth, ttFlag);
+        }
         return alpha;
+    }
+
+    private int evaluate(Bitboard bitboard) {
+        return config.isEnabled("PieceSquareTables")
+                ? evaluator.evaluateAdvanced(bitboard)
+                : evaluator.evaluatePieces(bitboard);
     }
 
     private boolean hasNonPawnMaterial(boolean isWhiteTurn) {
@@ -222,10 +240,10 @@ public class Minimax {
 
         // recursion base case
         if (depth == 0) {
-            return (isWhiteTurn ? 1 : -1) * evaluator.evaluateAdvanced(bitboard);
+            return (isWhiteTurn ? 1 : -1) * evaluate(bitboard);
         }
 
-        int standPat = (isWhiteTurn ? 1 : -1) * evaluator.evaluateAdvanced(bitboard);
+        int standPat = (isWhiteTurn ? 1 : -1) * evaluate(bitboard);
         if (standPat >= beta) {
             return beta;
         }

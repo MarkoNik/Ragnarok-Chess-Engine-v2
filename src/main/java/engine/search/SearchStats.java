@@ -19,6 +19,14 @@ public class SearchStats {
         nodesSearched++;
     }
 
+    public int getNodesSearched() {
+        return nodesSearched;
+    }
+
+    public int getNullMoveCutoffs() {
+        return nullMoveCutoffs;
+    }
+
     public void recordBetaCutoff() {
         betaCutoffs++;
     }
