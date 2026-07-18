@@ -201,6 +201,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         # No ref override: checks out the branch that dispatched this workflow,
@@ -232,11 +233,13 @@ jobs:
           path: combined.pgn
           retention-days: 30
       - name: Record checkpoint to bench/history.jsonl
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Re-sync to the branch tip right before appending+pushing, to keep
-          # the race window (another push landing mid-run) as small as
-          # possible. This is a personal-scale repo; a hard reset here is
-          # safe since we're about to add one line, not build on local state.
+          # master requires PRs (branch protection), so this can no longer push
+          # directly. Instead: branch, commit, open a PR, and auto-merge it once
+          # CI reports (CI itself skips history-only diffs via paths-ignore, so
+          # the required check is satisfied immediately with nothing to build).
           git fetch origin ${{ github.ref_name }}
           git reset --hard origin/${{ github.ref_name }}
 
@@ -252,6 +255,16 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          branch="checkpoint-results/${{ github.run_id }}"
+          git checkout -b "$branch"
           git add bench/history.jsonl
           git commit -m "Record checkpoint: new ${{ needs.build-new.outputs.sha }} vs prev ${{ inputs.ref_prev }}"
-          git push origin HEAD:${{ github.ref_name }}
+          git push origin "HEAD:refs/heads/$branch"
+
+          pr_url=$(gh pr create \
+            --base "${{ github.ref_name }}" \
+            --head "$branch" \
+            --title "Record checkpoint: new ${{ needs.build-new.outputs.sha }} vs prev ${{ inputs.ref_prev }}" \
+            --body "Automated checkpoint result from run ${{ github.run_id }}. Only appends one line to bench/history.jsonl.")
+          gh pr merge --auto --squash "$pr_url"
